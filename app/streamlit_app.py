@@ -15,8 +15,9 @@ from sqlalchemy import select
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from defence_db.db import init_db, SessionLocal  # noqa: E402
-from defence_db.models import Company, PriceSnapshot, FinancialSnapshot  # noqa: E402
+from defence_db.models import Company, PriceSnapshot, FinancialSnapshot, RefreshRun  # noqa: E402
 from defence_db.etl.seed_from_excel import seed  # noqa: E402
+from defence_db.etl.refresh_market import refresh_all  # noqa: E402
 
 st.set_page_config(page_title="Defence & Aerospace Live DB", layout="wide")
 init_db()
@@ -111,6 +112,42 @@ if overview.empty:
     st.stop()
 
 with st.sidebar:
+    st.header("Live data")
+    with SessionLocal() as _ls:
+        last = _ls.execute(
+            select(RefreshRun).order_by(RefreshRun.id.desc()).limit(1)
+        ).scalar_one_or_none()
+    if last and last.finished_at:
+        st.caption(
+            f"Last refresh: {last.finished_at.strftime('%Y-%m-%d %H:%M UTC')}  \n"
+            f"{last.companies_succeeded}/{last.companies_attempted} OK via {last.source}"
+        )
+    else:
+        st.caption("No refresh recorded yet — click below to pull live data.")
+
+    if st.button("🔄 Refresh live data now", type="primary", use_container_width=True):
+        progress = st.progress(0.0, text="Starting...")
+        status_box = st.empty()
+
+        def _on_progress(i: int, total: int, name: str) -> None:
+            progress.progress(i / max(total, 1), text=f"{i}/{total} — {name[:40]}")
+
+        try:
+            run = refresh_all(on_progress=_on_progress)
+            progress.empty()
+            status_box.success(
+                f"✅ Refreshed {run.companies_succeeded}/{run.companies_attempted} companies. "
+                "Reloading dashboard..."
+            )
+            load_overview.clear()
+            load_financials_for.clear()
+            load_price_history.clear()
+            st.rerun()
+        except Exception as e:
+            progress.empty()
+            status_box.error(f"Refresh failed: {e}")
+
+    st.divider()
     st.header("Filters")
     chains = ["(All)"] + sorted([c for c in overview["Value Chain"].dropna().unique()])
     sizes = ["(All)"] + sorted([c for c in overview["Type"].dropna().unique()])
@@ -130,10 +167,9 @@ with st.sidebar:
 has_live_data = overview["Mkt Cap (USD mn)"].notna().any()
 if not has_live_data:
     st.info(
-        "📡 No live market data yet. The nightly refresh hasn't run — "
-        "trigger it manually from the **Actions** tab in GitHub "
-        "(workflow: *Refresh defence DB*) to populate prices, P/E, market cap, etc. "
-        "Until then, the dashboard shows company metadata + seeded historical financials only."
+        "📡 No live market data yet. Click **🔄 Refresh live data now** in the sidebar "
+        "to pull prices, P/E, market cap, etc. from Yahoo Finance "
+        "(takes ~2–3 minutes for all 78 listed companies)."
     )
 
 filt = overview.copy()

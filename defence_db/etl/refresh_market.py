@@ -5,6 +5,7 @@ Run via `python -m defence_db.etl.refresh_market` (or scripts/refresh.py for CLI
 from __future__ import annotations
 import logging
 from datetime import datetime
+from typing import Callable
 from sqlalchemy import select, and_
 
 from ..db import init_db, session_scope
@@ -13,8 +14,13 @@ from ..adapters import YFinanceSource, MarketDataSource
 
 logger = logging.getLogger(__name__)
 
+ProgressFn = Callable[[int, int, str], None]
 
-def refresh_all(source: MarketDataSource | None = None) -> RefreshRun:
+
+def refresh_all(
+    source: MarketDataSource | None = None,
+    on_progress: ProgressFn | None = None,
+) -> RefreshRun:
     init_db()
     src = source or YFinanceSource()
 
@@ -27,10 +33,16 @@ def refresh_all(source: MarketDataSource | None = None) -> RefreshRun:
             select(Company).where(Company.yahoo_symbol.is_not(None))
         ).scalars().all()
         run.companies_attempted = len(companies)
-        logger.info("refreshing %d companies via %s", len(companies), src.name)
+        total = len(companies)
+        logger.info("refreshing %d companies via %s", total, src.name)
 
         ok = 0
-        for co in companies:
+        for i, co in enumerate(companies, start=1):
+            if on_progress:
+                try:
+                    on_progress(i, total, co.name)
+                except Exception:
+                    pass
             snap = src.fetch(co.yahoo_symbol)
             if snap is None:
                 continue
@@ -63,7 +75,7 @@ def refresh_all(source: MarketDataSource | None = None) -> RefreshRun:
             ok += 1
         run.companies_succeeded = ok
         run.finished_at = datetime.utcnow()
-        logger.info("refresh complete: %d/%d", ok, len(companies))
+        logger.info("refresh complete: %d/%d", ok, total)
         return run
 
 
