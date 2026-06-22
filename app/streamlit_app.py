@@ -16,9 +16,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from defence_db.db import init_db, SessionLocal  # noqa: E402
 from defence_db.models import Company, PriceSnapshot, FinancialSnapshot  # noqa: E402
+from defence_db.etl.seed_from_excel import seed  # noqa: E402
 
 st.set_page_config(page_title="Defence & Aerospace Live DB", layout="wide")
 init_db()
+
+# Auto-seed on first run (e.g. fresh Streamlit Cloud deploy) so the dashboard
+# is never empty out of the box.
+with SessionLocal() as _s:
+    from sqlalchemy import func, select as _sel
+    if _s.execute(_sel(func.count(Company.id))).scalar() == 0:
+        with st.spinner("First-run setup: seeding companies from source Excel..."):
+            seed()
 
 
 @st.cache_data(ttl=300)
