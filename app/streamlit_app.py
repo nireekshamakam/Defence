@@ -118,9 +118,22 @@ with st.sidebar:
     chain = st.selectbox("Value Chain", chains)
     size = st.selectbox("Size", sizes)
     status = st.selectbox("Status", statuses)
+
+    mc_series = overview["Mkt Cap (USD mn)"].dropna()
+    mc_ceiling = int(mc_series.max()) if not mc_series.empty else 100000
+    if mc_ceiling <= 0:
+        mc_ceiling = 100000
     mc_min, mc_max = st.slider(
-        "Mkt Cap (USD mn)", 0, int(overview["Mkt Cap (USD mn)"].max() or 100000),
-        (0, int(overview["Mkt Cap (USD mn)"].max() or 100000)),
+        "Mkt Cap (USD mn)", 0, mc_ceiling, (0, mc_ceiling),
+    )
+
+has_live_data = overview["Mkt Cap (USD mn)"].notna().any()
+if not has_live_data:
+    st.info(
+        "📡 No live market data yet. The nightly refresh hasn't run — "
+        "trigger it manually from the **Actions** tab in GitHub "
+        "(workflow: *Refresh defence DB*) to populate prices, P/E, market cap, etc. "
+        "Until then, the dashboard shows company metadata + seeded historical financials only."
     )
 
 filt = overview.copy()
@@ -135,11 +148,14 @@ filt = filt[
     & (filt["Mkt Cap (USD mn)"].fillna(0) <= mc_max)
 ]
 
+def _fmt(v, spec=".1f"):
+    return format(v, spec) if pd.notna(v) else "—"
+
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Companies", len(filt))
-c2.metric("Total Mkt Cap (USD mn)", f"{filt['Mkt Cap (USD mn)'].sum():,.0f}")
-c3.metric("Median P/E (TTM)", f"{filt['P/E (TTM)'].median():.1f}" if filt['P/E (TTM)'].notna().any() else "—")
-c4.metric("Median EV/EBITDA", f"{filt['EV/EBITDA'].median():.1f}" if filt['EV/EBITDA'].notna().any() else "—")
+c2.metric("Total Mkt Cap (USD mn)", _fmt(filt['Mkt Cap (USD mn)'].sum(skipna=True), ",.0f") if filt['Mkt Cap (USD mn)'].notna().any() else "—")
+c3.metric("Median P/E (TTM)", _fmt(filt['P/E (TTM)'].median()))
+c4.metric("Median EV/EBITDA", _fmt(filt['EV/EBITDA'].median()))
 
 tab1, tab2, tab3 = st.tabs(["Overview", "Company detail", "Valuation scatter"])
 
